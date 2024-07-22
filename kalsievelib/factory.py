@@ -10,17 +10,36 @@ are supported.
 
 import io
 import sys
+from typing import List, Optional, TypedDict, Union
+from typing_extensions import NotRequired
 
 from kalsievelib import commands
 
 
-class FiltersSet(object):
+class FilterAlreadyExists(Exception):
+    pass
 
+
+class Filter(TypedDict):
+    """Type definition for filter."""
+
+    name: str
+    content: commands.Command
+    enabled: bool
+    description: NotRequired[str]
+
+
+class FiltersSet:
     """A set of filters."""
 
-    def __init__(self, name, filter_name_pretext=u"# Filter: ",
-                 filter_desc_pretext=u"# Description: "):
-        """Represents a set of one or more filters
+    def __init__(
+        self,
+        name: str,
+        filter_name_pretext: str = "# Filter: ",
+        filter_desc_pretext: str = "# Description: ",
+    ):
+        """
+        Represents a set of one or more filters.
 
         :param name: the filterset's name
         :param filter_name_pretext: the text that is used to mark a filter name
@@ -31,8 +50,8 @@ class FiltersSet(object):
         self.name = name
         self.filter_name_pretext = filter_name_pretext
         self.filter_desc_pretext = filter_desc_pretext
-        self.requires = []
-        self.filters = []
+        self.requires: List[str] = []
+        self.filters: List[Filter] = []
 
     def __str__(self):
         target = io.StringIO()
@@ -41,7 +60,7 @@ class FiltersSet(object):
         target.close()
         return ret
 
-    def __isdisabled(self, fcontent):
+    def __isdisabled(self, fcontent: commands.Command) -> bool:
         """Tells if a filter is disabled or not
 
         Simply checks if the filter is surrounded by a "if false" test.
@@ -54,7 +73,7 @@ class FiltersSet(object):
             return False
         return True
 
-    def from_parser_result(self, parser):
+    def from_parser_result(self, parser: "kalsievelib.parser.Parser"):
         cpt = 1
         for f in parser.result:
             if isinstance(f, commands.RequireCommand):
@@ -73,13 +92,17 @@ class FiltersSet(object):
                     name = comment.replace(self.filter_name_pretext, "")
                 if comment.startswith(self.filter_desc_pretext):
                     description = comment.replace(self.filter_desc_pretext, "")
-            self.filters += [{"name": name,
-                              "description": description,
-                              "content": f,
-                              "enabled": not self.__isdisabled(f)}]
+            self.filters += [
+                {
+                    "name": name,
+                    "description": description,
+                    "content": f,
+                    "enabled": not self.__isdisabled(f),
+                }
+            ]
             cpt += 1
 
-    def require(self, name):
+    def require(self, name: str):
         """Add a new extension to the requirements list
 
         :param name: the extension's name
@@ -88,15 +111,13 @@ class FiltersSet(object):
         if name not in self.requires:
             self.requires += [name]
 
-    def check_if_arg_is_extension(self, arg):
+    def check_if_arg_is_extension(self, arg: str):
         """Include extension if arg requires one."""
-        args_using_extensions = {
-            ":copy": "copy"
-        }
+        args_using_extensions = {":copy": "copy"}
         if arg in args_using_extensions:
             self.require(args_using_extensions[arg])
 
-    def __gen_require_command(self):
+    def __gen_require_command(self) -> Union[commands.Command, None]:
         """Internal method to create a RequireCommand based on requirements
 
         Called just before this object is going to be dumped.
@@ -107,7 +128,7 @@ class FiltersSet(object):
         reqcmd.check_next_arg("stringlist", self.requires)
         return reqcmd
 
-    def __quote_if_necessary(self, value):
+    def __quote_if_necessary(self, value: str) -> str:
         """Add double quotes to the given string if necessary
 
         :param value: the string to check
@@ -117,7 +138,9 @@ class FiltersSet(object):
             return '"%s"' % value
         return value
 
-    def __build_condition(self, condition, parent, tag=None):
+    def __build_condition(
+        self, condition: List[str], parent: commands.Command, tag: Optional[str] = None
+    ) -> commands.Command:
         """Translate a condition to a valid kalsievelib Command.
 
         :param list condition: condition's definition
@@ -134,7 +157,12 @@ class FiltersSet(object):
         cmd.check_next_arg("string", self.__quote_if_necessary(condition[2]))
         return cmd
 
-    def __create_filter(self, conditions, actions, matchtype="anyof"):
+    def __create_filter(
+        self,
+        conditions: List[tuple],
+        actions: List[tuple],
+        matchtype: str = "anyof",
+    ) -> commands.Command:
         """Create a new filter
 
         A filter is composed of:
@@ -175,12 +203,10 @@ class FiltersSet(object):
             elif cname == "exists":
                 cmd = commands.get_command_instance("exists", ifcontrol)
                 cmd.check_next_arg(
-                    "stringlist",
-                    "[%s]" % (",".join('"%s"' % val for val in c[1:]))
+                    "stringlist", "[%s]" % (",".join('"%s"' % val for val in c[1:]))
                 )
             elif cname == "envelope":
-                cmd = commands.get_command_instance(
-                    "envelope", ifcontrol, False)
+                cmd = commands.get_command_instance("envelope", ifcontrol, False)
                 self.require("envelope")
                 if c[1].startswith(":not"):
                     comp_tag = c[1].replace("not", "")
@@ -190,11 +216,11 @@ class FiltersSet(object):
                 cmd.check_next_arg("tag", comp_tag)
                 cmd.check_next_arg(
                     "stringlist",
-                    "[{}]".format(",".join('"{}"'.format(val) for val in c[2]))
+                    "[{}]".format(",".join('"{}"'.format(val) for val in c[2])),
                 )
                 cmd.check_next_arg(
                     "stringlist",
-                    "[{}]".format(",".join('"{}"'.format(val) for val in c[3]))
+                    "[{}]".format(",".join('"{}"'.format(val) for val in c[3])),
                 )
             elif cname == "body":
                 cmd = commands.get_command_instance("body", ifcontrol, False)
@@ -207,12 +233,10 @@ class FiltersSet(object):
                     comp_tag = c[2]
                 cmd.check_next_arg("tag", comp_tag)
                 cmd.check_next_arg(
-                    "stringlist",
-                    "[%s]" % (",".join('"%s"' % val for val in c[3:]))
+                    "stringlist", "[%s]" % (",".join('"%s"' % val for val in c[3:]))
                 )
             elif cname == "currentdate":
-                cmd = commands.get_command_instance(
-                    "currentdate", ifcontrol, False)
+                cmd = commands.get_command_instance("currentdate", ifcontrol, False)
                 self.require(cmd.extension)
                 cmd.check_next_arg("tag", c[1])
                 cmd.check_next_arg("string", self.__quote_if_necessary(c[2]))
@@ -226,21 +250,21 @@ class FiltersSet(object):
                 if comp_tag == ":value":
                     self.require("relational")
                     cmd.check_next_arg(
-                        "string", self.__quote_if_necessary(c[next_arg_pos]))
+                        "string", self.__quote_if_necessary(c[next_arg_pos])
+                    )
                     next_arg_pos += 1
-                cmd.check_next_arg(
-                    "string", self.__quote_if_necessary(c[next_arg_pos]))
+                cmd.check_next_arg("string", self.__quote_if_necessary(c[next_arg_pos]))
                 next_arg_pos += 1
                 cmd.check_next_arg(
                     "stringlist",
-                    "[%s]" %
-                    (",".join('"%s"' % val for val in c[next_arg_pos:]))
+                    "[%s]" % (",".join('"%s"' % val for val in c[next_arg_pos:])),
                 )
             else:
                 # header command fallback
-                if c[1].startswith(':not'):
+                if c[1].startswith(":not"):
                     cmd = self.__build_condition(
-                        c, ifcontrol, c[1].replace("not", "", 1))
+                        c, ifcontrol, c[1].replace("not", "", 1)
+                    )
                     negate = True
                 else:
                     cmd = self.__build_condition(c, ifcontrol)
@@ -266,13 +290,24 @@ class FiltersSet(object):
             ifcontrol.addchild(action)
         return ifcontrol
 
-    def _unicode_filter_name(self, name):
+    def _unicode_filter_name(self, name) -> str:
         """Convert name to unicode if necessary."""
-        return (
-            name.decode("utf-8") if isinstance(name, bytes) else name
-        )
+        return name.decode("utf-8") if isinstance(name, bytes) else name
 
-    def addfilter(self, name, conditions, actions, matchtype="anyof"):
+    def filter_exists(self, name: str) -> bool:
+        """Check if a filter with name already exists."""
+        for existing_filter in self.filters:
+            if existing_filter["name"] == name:
+                return True
+        return False
+
+    def addfilter(
+        self,
+        name: str,
+        conditions: List[tuple],
+        actions: List[tuple],
+        matchtype: str = "anyof",
+    ):
         """Add a new filter to this filters set
 
         :param name: the filter's name
@@ -280,14 +315,26 @@ class FiltersSet(object):
         :param actions: the list of actions
         :param matchtype: "anyof" or "allof"
         """
+        name = self._unicode_filter_name(name)
+        if self.filter_exists(name):
+            raise FilterAlreadyExists
         ifcontrol = self.__create_filter(conditions, actions, matchtype)
-        self.filters += [{
-            "name": self._unicode_filter_name(name), "content": ifcontrol,
-            "enabled": True}
+        self.filters += [
+            {
+                "name": name,
+                "content": ifcontrol,
+                "enabled": True,
+            }
         ]
 
     def updatefilter(
-            self, oldname, newname, conditions, actions, matchtype="anyof"):
+        self,
+        oldname: str,
+        newname: str,
+        conditions: List[tuple],
+        actions: List[tuple],
+        matchtype: str = "anyof",
+    ) -> bool:
         """Update a specific filter
 
         Instead of removing and re-creating the filter, we update the
@@ -299,20 +346,30 @@ class FiltersSet(object):
         :param actions: the list of actions
         :param matchtype: "anyof" or "allof"
         """
+        filter_def = None
         oldname = self._unicode_filter_name(oldname)
-        newname = self._unicode_filter_name(newname)
         for f in self.filters:
             if f["name"] == oldname:
-                f["name"] = newname
-                f["content"] = \
-                    self.__create_filter(conditions, actions, matchtype)
-                if not f["enabled"]:
-                    return self.disablefilter(newname)
-                return True
-        return False
+                filter_def = f
+                break
+        if not filter_def:
+            return False
+        newname = self._unicode_filter_name(newname)
+        if newname != oldname and self.filter_exists(newname):
+            raise FilterAlreadyExists
+        filter_def["name"] = newname
+        filter_def["content"] = self.__create_filter(conditions, actions, matchtype)
+        if not filter_def["enabled"]:
+            return self.disablefilter(newname)
+        return True
 
     def replacefilter(
-            self, oldname, sieve_filter, newname=None, description=None):
+        self,
+        oldname: str,
+        sieve_filter: commands.Command,
+        newname: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> bool:
         """replace a specific sieve_filter
 
         Instead of removing and re-creating the sieve_filter, we update the
@@ -323,22 +380,28 @@ class FiltersSet(object):
         :param sieve_filter: the sieve_filter object as get from
                              FiltersSet.getfilter()
         """
+        filter_def = None
         oldname = self._unicode_filter_name(oldname)
-        newname = self._unicode_filter_name(newname)
-        if newname is None:
-            newname = oldname
         for f in self.filters:
             if f["name"] == oldname:
-                f["name"] = newname
-                f["content"] = sieve_filter
-                if description is not None:
-                    f['description'] = description
-                if not f["enabled"]:
-                    return self.disablefilter(newname)
-                return True
-        return False
+                filter_def = f
+                break
+        if not filter_def:
+            return False
+        if newname is None:
+            newname = oldname
+        newname = self._unicode_filter_name(newname)
+        if newname != oldname and self.filter_exists(newname):
+            raise FilterAlreadyExists
+        filter_def["name"] = newname
+        filter_def["content"] = sieve_filter
+        if description is not None:
+            filter_def["description"] = description
+        if not filter_def["enabled"]:
+            return self.disablefilter(newname)
+        return True
 
-    def getfilter(self, name):
+    def getfilter(self, name: str) -> Union[commands.Command, None]:
         """Search for a specific filter
 
         :param name: the filter's name
@@ -352,18 +415,17 @@ class FiltersSet(object):
                 return f["content"]
         return None
 
-    def get_filter_matchtype(self, name):
+    def get_filter_matchtype(self, name: str) -> Union[str, None]:
         """Retrieve matchtype of the given filter."""
         flt = self.getfilter(name)
         if not flt:
             return None
         for node in flt.walk():
-            if isinstance(node, (commands.AllofCommand,
-                                 commands.AnyofCommand)):
+            if isinstance(node, (commands.AllofCommand, commands.AnyofCommand)):
                 return node.__class__.__name__.lower().replace("command", "")
         return None
 
-    def get_filter_conditions(self, name):
+    def get_filter_conditions(self, name: str) -> Union[List[str], None]:
         """Retrieve conditions of the given filter."""
         flt = self.getfilter(name)
         if not flt:
@@ -373,54 +435,48 @@ class FiltersSet(object):
         for node in flt.walk():
             if isinstance(node, commands.NotCommand):
                 negate = True
-            elif isinstance(node, (commands.HeaderCommand,
-                                   commands.SizeCommand,
-                                   commands.ExistsCommand,
-                                   commands.BodyCommand,
-                                   commands.EnvelopeCommand,
-                                   commands.CurrentdateCommand)):
+            elif isinstance(
+                node,
+                (
+                    commands.HeaderCommand,
+                    commands.SizeCommand,
+                    commands.ExistsCommand,
+                    commands.BodyCommand,
+                    commands.EnvelopeCommand,
+                    commands.CurrentdateCommand,
+                ),
+            ):
                 args = node.args_as_tuple()
                 if negate:
                     if node.name in ["header", "envelope"]:
-                        nargs = (
-                            args[0],
-                            ":not{}".format(args[1][1:])
-                        )
+                        nargs = (args[0], ":not{}".format(args[1][1:]))
                         if len(args) > 3:
-                            nargs += (args[2:])
+                            nargs += args[2:]
                         else:
                             nargs += (args[2],)
                         args = nargs
                     elif node.name == "body":
-                        args = (
-                            args[:2] +
-                            (":not{}".format(args[2][1:]),) +
-                            args[3:]
-                        )
+                        args = args[:2] + (":not{}".format(args[2][1:]),) + args[3:]
                     elif node.name == "currentdate":
-                        args = (
-                            args[:3] +
-                            (":not{}".format(args[3][1:]),) +
-                            args[4:]
-                        )
+                        args = args[:3] + (":not{}".format(args[3][1:]),) + args[4:]
                     elif node.name == "exists":
                         args = ("not{}".format(args[0]),) + args[1:]
                     negate = False
                 conditions.append(args)
         return conditions
 
-    def get_filter_actions(self, name):
+    def get_filter_actions(self, name: str) -> Union[List[str], None]:
         """Retrieve actions of the given filter."""
         flt = self.getfilter(name)
         if not flt:
             return None
-        actions = []
+        actions: list = []
         for node in flt.walk():
             if isinstance(node, commands.ActionCommand):
                 actions.append(node.args_as_tuple())
         return actions
 
-    def removefilter(self, name):
+    def removefilter(self, name: str) -> bool:
         """Remove a specific filter
 
         :param name: the filter's name
@@ -432,7 +488,7 @@ class FiltersSet(object):
                 return True
         return False
 
-    def enablefilter(self, name):
+    def enablefilter(self, name: str) -> bool:
         """Enable a filter
 
         Just removes the "if false" test surrouding this filter.
@@ -450,7 +506,7 @@ class FiltersSet(object):
             return True
         return False  # raise NotFound
 
-    def is_filter_disabled(self, name):
+    def is_filter_disabled(self, name: str) -> bool:
         """Tells if the filter is currently disabled or not
 
         :param name: the filter's name
@@ -461,7 +517,7 @@ class FiltersSet(object):
                 return self.__isdisabled(f["content"])
         return True
 
-    def disablefilter(self, name):
+    def disablefilter(self, name: str) -> bool:
         """Disable a filter
 
         Instead of commenting the filter, we just surround it with a
@@ -483,7 +539,7 @@ class FiltersSet(object):
             return True
         return False
 
-    def movefilter(self, name, direction):
+    def movefilter(self, name: str, direction: str) -> bool:
         """Moves the filter up or down
 
         :param name: the filter's name
@@ -537,19 +593,26 @@ class FiltersSet(object):
         cmd = self.__gen_require_command()
         if cmd:
             cmd.tosieve(target=target)
-            target.write(u"\n")
+            target.write("\n")
         for f in self.filters:
             target.write("{}{}\n".format(self.filter_name_pretext, f["name"]))
             if "description" in f and f["description"]:
-                target.write(u"{}{}\n".format(
-                    self.filter_desc_pretext, f["description"]))
+                target.write(
+                    "{}{}\n".format(self.filter_desc_pretext, f["description"])
+                )
             f["content"].tosieve(target=target)
 
 
 if __name__ == "__main__":
     fs = FiltersSet("test")
 
-    fs.addfilter("rule1",
-                 [("Sender", ":is", "toto@toto.com"), ],
-                 [("fileinto", "Toto"), ])
+    fs.addfilter(
+        "rule1",
+        [
+            ("Sender", ":is", "toto@toto.com"),
+        ],
+        [
+            ("fileinto", "Toto"),
+        ],
+    )
     fs.tosieve()

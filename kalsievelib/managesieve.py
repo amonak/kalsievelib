@@ -7,10 +7,12 @@ a user to syntactically flawed scripts.
 
 Implementation based on RFC 5804.
 """
+
 import base64
 import re
 import socket
 import ssl
+from typing import Any, List, Optional, Tuple
 
 from .digest_md5 import DigestMD5
 from . import tools
@@ -18,11 +20,17 @@ from . import tools
 
 CRLF = b"\r\n"
 
-KNOWN_CAPABILITIES = [u"IMPLEMENTATION", u"SASL", u"SIEVE",
-                      u"STARTTLS", u"NOTIFY", u"LANGUAGE",
-                      u"VERSION"]
+KNOWN_CAPABILITIES = [
+    "IMPLEMENTATION",
+    "SASL",
+    "SIEVE",
+    "STARTTLS",
+    "NOTIFY",
+    "LANGUAGE",
+    "VERSION",
+]
 
-SUPPORTED_AUTH_MECHS = [u"DIGEST-MD5", u"PLAIN", u"LOGIN"]
+SUPPORTED_AUTH_MECHS = ["DIGEST-MD5", "PLAIN", "LOGIN", "OAUTHBEARER"]
 
 
 class Error(Exception):
@@ -30,7 +38,7 @@ class Error(Exception):
 
 
 class Response(Exception):
-    def __init__(self, code, data):
+    def __init__(self, code: bytes, data: bytes):
         self.code = code
         self.data = data
 
@@ -62,24 +70,25 @@ def authentication_required(meth):
     return check
 
 
-class Client(object):
+class Client:
     read_size = 4096
     read_timeout = 5
 
-    def __init__(self, srvaddr, srvport=4190, debug=False):
+    def __init__(self, srvaddr: str, srvport: int = 4190, debug: bool = False):
         self.srvaddr = srvaddr
         self.srvport = srvport
         self.__debug = debug
-        self.sock = None
-        self.__read_buffer = b""
-        self.authenticated = False
-        self.errcode = None
+        self.sock: socket.socket = None
+        self.__read_buffer: bytes = b""
+        self.authenticated: bool = False
+        self.errcode: bytes = None
+        self.errmsg: bytes = b""
 
-        self.__capabilities = {}
-        self.__respcode_expr = re.compile(br"(OK|NO|BYE)\s*(.+)?")
-        self.__error_expr = re.compile(br'(\([\w/-]+\))?\s*(".+")')
-        self.__size_expr = re.compile(br"\{(\d+)\+?\}")
-        self.__active_expr = re.compile(br"ACTIVE", re.IGNORECASE)
+        self.__capabilities: dict[str, str] = {}
+        self.__respcode_expr = re.compile(rb"(OK|NO|BYE)\s*(.+)?")
+        self.__error_expr = re.compile(rb'(\([\w/-]+\))?\s*(".+")')
+        self.__size_expr = re.compile(rb"\{(\d+)\+?\}")
+        self.__active_expr = re.compile(rb"ACTIVE", re.IGNORECASE)
 
     def __del__(self):
         if self.sock is not None:
@@ -91,7 +100,7 @@ class Client(object):
             return
         print("DEBUG: %s" % message)
 
-    def __read_block(self, size):
+    def __read_block(self, size: int) -> bytes:
         """Read a block of 'size' bytes from the server.
 
         An internal buffer is used to read data from the server. If
@@ -108,10 +117,7 @@ class Client(object):
         """
         buf = b""
         if len(self.__read_buffer):
-            limit = (
-                size if size <= len(self.__read_buffer) else
-                len(self.__read_buffer)
-            )
+            limit = size if size <= len(self.__read_buffer) else len(self.__read_buffer)
             buf = self.__read_buffer[:limit]
             self.__read_buffer = self.__read_buffer[limit:]
             size -= limit
@@ -124,7 +130,7 @@ class Client(object):
         self.__dprint(buf)
         return buf
 
-    def __read_line(self):
+    def __read_line(self) -> bytes:
         """Read one line from the server.
 
         An internal buffer is used to read data from the server
@@ -144,7 +150,7 @@ class Client(object):
             try:
                 pos = self.__read_buffer.index(CRLF)
                 ret = self.__read_buffer[:pos]
-                self.__read_buffer = self.__read_buffer[pos + len(CRLF):]
+                self.__read_buffer = self.__read_buffer[pos + len(CRLF) :]
                 break
             except ValueError:
                 pass
@@ -171,7 +177,7 @@ class Client(object):
                 raise Response(m.group(1), m.group(2))
         return ret
 
-    def __read_response(self, nblines=-1):
+    def __read_response(self, nblines: int = -1) -> Tuple[bytes, bytes, bytes]:
         """Read a response from the server.
 
         In the usual case, we read lines until we find one that looks
@@ -207,7 +213,7 @@ class Client(object):
 
         return (code, data, resp)
 
-    def __prepare_args(self, args):
+    def __prepare_args(self, args: List[Any]) -> List[bytes]:
         """Format command arguments before sending them.
 
         Command arguments of type string must be quoted, the only
@@ -227,7 +233,7 @@ class Client(object):
             ret += [bytes(str(a).encode("utf-8"))]
         return ret
 
-    def __prepare_content(self, content):
+    def __prepare_content(self, content: str) -> bytes:
         """Format script content before sending it.
 
         Script length must be inserted before the content,
@@ -236,13 +242,17 @@ class Client(object):
         :param content: script content as str or bytes
         :return: transformed script as bytes
         """
-        if isinstance(content, str):
-            content = content.encode('utf-8')
-        return b"{%d+}%s%s" % (len(content), CRLF, content)
+        bcontent: bytes = content.encode("utf-8")
+        return b"{%d+}%s%s" % (len(bcontent), CRLF, bcontent)
 
     def __send_command(
-            self, name, args=None, withcontent=False, extralines=None,
-            nblines=-1):
+        self,
+        name: str,
+        args: Optional[List[bytes]] = None,
+        withcontent: bool = False,
+        extralines: Optional[List[bytes]] = None,
+        nblines: int = -1,
+    ) -> Tuple[str, str, bytes]:
         """Send a command to the server.
 
         If args is not empty, we concatenate the given command with
@@ -281,7 +291,7 @@ class Client(object):
             return (code, data, content)
         return (code, data)
 
-    def __get_capabilities(self):
+    def __get_capabilities(self) -> bool:
         code, data, capabilities = self.__read_response()
         if code == "NO":
             return False
@@ -292,12 +302,11 @@ class Client(object):
             if cname not in KNOWN_CAPABILITIES:
                 continue
             self.__capabilities[cname] = (
-                parts[1].strip(b'"').decode("utf-8")
-                if len(parts) > 1 else None
+                parts[1].strip(b'"').decode("utf-8") if len(parts) > 1 else None
             )
         return True
 
-    def __parse_error(self, text):
+    def __parse_error(self, text: bytes):
         """Parse an error received from the server.
 
         if text corresponds to a size indication, we grab the
@@ -325,53 +334,59 @@ class Client(object):
             self.errcode = b""
         self.errmsg = m.group(2).strip(b'"')
 
-    def _plain_authentication(self, login, password, authz_id=b""):
+    def _plain_authentication(
+        self, login: bytes, password: bytes, authz_id: bytes = b""
+    ) -> bool:
         """SASL PLAIN authentication
 
         :param login: username
         :param password: clear password
         :return: True on success, False otherwise.
         """
-        if isinstance(login, str):
-            login = login.encode("utf-8")
-        if isinstance(password, str):
-            password = password.encode("utf-8")
-        params = base64.b64encode(b'\0'.join([authz_id, login, password]))
+        params = base64.b64encode(b"\0".join([authz_id, login, password]))
         code, data = self.__send_command("AUTHENTICATE", [b"PLAIN", params])
         if code == "OK":
             return True
         return False
 
-    def _login_authentication(self, login, password, authz_id=""):
+    def _login_authentication(
+        self, login: bytes, password: bytes, authz_id: bytes = ""
+    ) -> bool:
         """SASL LOGIN authentication
 
         :param login: username
         :param password: clear password
         :return: True on success, False otherwise.
         """
-        extralines = [b'"%s"' % base64.b64encode(login.encode("utf-8")),
-                      b'"%s"' % base64.b64encode(password.encode("utf-8"))]
-        code, data = self.__send_command("AUTHENTICATE", [b"LOGIN"],
-                                         extralines=extralines)
+        extralines = [
+            b'"%s"' % base64.b64encode(login),
+            b'"%s"' % base64.b64encode(password),
+        ]
+        code, data = self.__send_command(
+            "AUTHENTICATE", [b"LOGIN"], extralines=extralines
+        )
         if code == "OK":
             return True
         return False
 
-    def _digest_md5_authentication(self, login, password, authz_id=""):
+    def _digest_md5_authentication(
+        self, login: bytes, password: bytes, authz_id: bytes = b""
+    ) -> bool:
         """SASL DIGEST-MD5 authentication
 
         :param login: username
         :param password: clear password
         :return: True on success, False otherwise.
         """
-        code, data, challenge = \
-            self.__send_command("AUTHENTICATE", [b"DIGEST-MD5"],
-                                withcontent=True, nblines=1)
+        code, data, challenge = self.__send_command(
+            "AUTHENTICATE", [b"DIGEST-MD5"], withcontent=True, nblines=1
+        )
         dmd5 = DigestMD5(challenge, "sieve/%s" % self.srvaddr)
 
         code, data, challenge = self.__send_command(
             '"%s"' % dmd5.response(login, password, authz_id),
-            withcontent=True, nblines=1
+            withcontent=True,
+            nblines=1,
         )
         if not challenge:
             return False
@@ -383,7 +398,34 @@ class Client(object):
             return True
         return False
 
-    def __authenticate(self, login, password, authz_id=b"", authmech=None):
+    def _oauthbearer_authentication(
+        self, login: bytes, password: bytes, authz_id: bytes = b""
+    ) -> bool:
+        """
+        OAUTHBEARER authentication.
+
+        :param login: username
+        :param password: clear password
+        :return: True on success, False otherwise.
+        """
+        if isinstance(login, str):
+            login = login.encode("utf-8")
+        if isinstance(password, str):
+            password = password.encode("utf-8")
+        token = b"n,a=" + login + b",\001auth=Bearer " + password + b"\001\001"
+        token = base64.b64encode(token)
+        code, data = self.__send_command("AUTHENTICATE", [b"OAUTHBEARER", token])
+        if code == "OK":
+            return True
+        return False
+
+    def __authenticate(
+        self,
+        login: str,
+        password: str,
+        authz_id: str = "",
+        authmech: Optional[str] = None,
+    ) -> bool:
         """AUTHENTICATE command
 
         Actually, it is just a wrapper to the real commands (one by
@@ -413,7 +455,11 @@ class Client(object):
                 continue
             mech = mech.lower().replace("-", "_")
             auth_method = getattr(self, "_%s_authentication" % mech)
-            if auth_method(login, password, authz_id):
+            if auth_method(
+                login.encode("utf-8"),
+                password.encode("utf-8"),
+                authz_id.encode("utf-8"),
+            ):
                 self.authenticated = True
                 return True
             return False
@@ -421,7 +467,7 @@ class Client(object):
         self.errmsg = b"No suitable mechanism found"
         return False
 
-    def __starttls(self, keyfile=None, certfile=None):
+    def __starttls(self, keyfile=None, certfile=None) -> bool:
         """STARTTLS command
 
         See MANAGESIEVE specifications, section 2.2.
@@ -435,8 +481,12 @@ class Client(object):
         code, data = self.__send_command("STARTTLS")
         if code != "OK":
             return False
+        context = ssl.create_default_context()
+        if certfile is not None:
+            context.load_cert_chain(certfile, keyfile=keyfile)
         try:
-            nsock = ssl.wrap_socket(self.sock, keyfile, certfile)
+            # nsock = ssl.wrap_socket(self.sock, keyfile, certfile)
+            nsock = context.wrap_socket(self.sock, server_hostname=self.srvaddr)
         except ssl.SSLError as e:
             raise Error("SSL error: %s" % str(e))
         self.sock = nsock
@@ -444,7 +494,7 @@ class Client(object):
         self.__get_capabilities()
         return True
 
-    def get_implementation(self):
+    def get_implementation(self) -> str:
         """Returns the IMPLEMENTATION value.
 
         It is read from server capabilities. (see the CAPABILITY
@@ -454,7 +504,7 @@ class Client(object):
         """
         return self.__capabilities["IMPLEMENTATION"]
 
-    def get_sasl_mechanisms(self):
+    def get_sasl_mechanisms(self) -> List[str]:
         """Returns the supported authentication mechanisms.
 
         They're read from server capabilities. (see the CAPABILITY
@@ -464,7 +514,7 @@ class Client(object):
         """
         return self.__capabilities["SASL"].split()
 
-    def has_tls_support(self):
+    def has_tls_support(self) -> bool:
         """Tells if the server has STARTTLS support or not.
 
         It is read from server capabilities. (see the CAPABILITY
@@ -487,8 +537,13 @@ class Client(object):
         return self.__capabilities["SIEVE"]
 
     def connect(
-            self, login, password, authz_id=b"", starttls=False,
-            authmech=None):
+        self,
+        login: str,
+        password: str,
+        authz_id: str = "",
+        starttls: bool = False,
+        authmech: Optional[str] = None,
+    ):
         """Establish a connection with the server.
 
         This function must be used. It read the server capabilities
@@ -529,14 +584,13 @@ class Client(object):
 
         :rtype: string
         """
-        code, data, capabilities = (
-            self.__send_command("CAPABILITY", withcontent=True))
+        code, data, capabilities = self.__send_command("CAPABILITY", withcontent=True)
         if code == "OK":
             return capabilities
         return None
 
     @authentication_required
-    def havespace(self, scriptname, scriptsize):
+    def havespace(self, scriptname: str, scriptsize: int) -> bool:
         """Ask for available space.
 
         See MANAGESIEVE specifications, section 2.5
@@ -546,29 +600,29 @@ class Client(object):
         :rtype: boolean
         """
         code, data = self.__send_command(
-            "HAVESPACE", [scriptname.encode("utf-8"), scriptsize])
+            "HAVESPACE", [scriptname.encode("utf-8"), scriptsize]
+        )
         if code == "OK":
             return True
         return False
 
     @authentication_required
-    def listscripts(self):
+    def listscripts(self) -> Tuple[str, List[str]]:
         """List available scripts.
 
         See MANAGESIEVE specifications, section 2.7
 
         :returns: a 2-uple (active script, [script1, ...])
         """
-        code, data, listing = self.__send_command(
-            "LISTSCRIPTS", withcontent=True)
+        code, data, listing = self.__send_command("LISTSCRIPTS", withcontent=True)
         if code == "NO":
             return None
-        ret = []
-        active_script = None
+        ret: List[str] = []
+        active_script: str = None
         for l in listing.splitlines():
             if self.__size_expr.match(l):
                 continue
-            m = re.match(br'"([^"]+)"\s*(.+)', l)
+            m = re.match(rb'"([^"]+)"\s*(.+)', l)
             if m is None:
                 ret += [l.strip(b'"').decode("utf-8")]
                 continue
@@ -581,8 +635,9 @@ class Client(object):
         return (active_script, ret)
 
     @authentication_required
-    def getscript(self, name):
-        """Download a script from the server
+    def getscript(self, name: str) -> str:
+        """
+        Download a script from the server.
 
         See MANAGESIEVE specifications, section 2.9
 
@@ -591,16 +646,17 @@ class Client(object):
         :returns: the script's content on succes, None otherwise
         """
         code, data, content = self.__send_command(
-            "GETSCRIPT", [name.encode("utf-8")], withcontent=True)
+            "GETSCRIPT", [name.encode("utf-8")], withcontent=True
+        )
         if code == "OK":
             lines = content.splitlines()
             if self.__size_expr.match(lines[0]) is not None:
                 lines = lines[1:]
-            return u"\n".join([line.decode("utf-8") for line in lines])
+            return "\n".join([line.decode("utf-8") for line in lines])
         return None
 
     @authentication_required
-    def putscript(self, name, content):
+    def putscript(self, name: str, content: str) -> bool:
         """Upload a script to the server
 
         See MANAGESIEVE specifications, section 2.6
@@ -609,15 +665,14 @@ class Client(object):
         :param content: script's content
         :rtype: boolean
         """
-        content = self.__prepare_content(content)
-        code, data = (
-            self.__send_command("PUTSCRIPT", [name.encode("utf-8"), content]))
+        bcontent = self.__prepare_content(content)
+        code, data = self.__send_command("PUTSCRIPT", [name.encode("utf-8"), bcontent])
         if code == "OK":
             return True
         return False
 
     @authentication_required
-    def deletescript(self, name):
+    def deletescript(self, name: str) -> bool:
         """Delete a script from the server
 
         See MANAGESIEVE specifications, section 2.10
@@ -625,14 +680,13 @@ class Client(object):
         :param name: script's name
         :rtype: boolean
         """
-        code, data = self.__send_command(
-            "DELETESCRIPT", [name.encode("utf-8")])
+        code, data = self.__send_command("DELETESCRIPT", [name.encode("utf-8")])
         if code == "OK":
             return True
         return False
 
     @authentication_required
-    def renamescript(self, oldname, newname):
+    def renamescript(self, oldname: str, newname: str) -> bool:
         """Rename a script on the server
 
         See MANAGESIEVE specifications, section 2.11.1
@@ -646,16 +700,15 @@ class Client(object):
         """
         if "VERSION" in self.__capabilities:
             code, data = self.__send_command(
-                "RENAMESCRIPT",
-                [oldname.encode("utf-8"), newname.encode("utf-8")])
+                "RENAMESCRIPT", [oldname.encode("utf-8"), newname.encode("utf-8")]
+            )
             if code == "OK":
                 return True
             return False
 
         (active_script, scripts) = self.listscripts()
-        condition = (
-            oldname != active_script and
-            (scripts is None or oldname not in scripts)
+        condition = oldname != active_script and (
+            scripts is None or oldname not in scripts
         )
         if condition:
             self.errmsg = b"Old script does not exist"
@@ -676,7 +729,7 @@ class Client(object):
         return True
 
     @authentication_required
-    def setactive(self, scriptname):
+    def setactive(self, scriptname: str) -> bool:
         """Define the active script
 
         See MANAGESIEVE specifications, section 2.8
@@ -687,14 +740,13 @@ class Client(object):
         :param scriptname: script's name
         :rtype: boolean
         """
-        code, data = self.__send_command(
-            "SETACTIVE", [scriptname.encode("utf-8")])
+        code, data = self.__send_command("SETACTIVE", [scriptname.encode("utf-8")])
         if code == "OK":
             return True
         return False
 
     @authentication_required
-    def checkscript(self, content):
+    def checkscript(self, content: str) -> bool:
         """Check whether a script is valid
 
         See MANAGESIEVE specifications, section 2.12
@@ -703,10 +755,9 @@ class Client(object):
         :rtype: boolean
         """
         if "VERSION" not in self.__capabilities:
-            raise NotImplementedError(
-                "server does not support CHECKSCRIPT command")
-        content = self.__prepare_content(content)
-        code, data = self.__send_command("CHECKSCRIPT", [content])
+            raise NotImplementedError("server does not support CHECKSCRIPT command")
+        bcontent = self.__prepare_content(content)
+        code, data = self.__send_command("CHECKSCRIPT", [bcontent])
         if code == "OK":
             return True
         return False
